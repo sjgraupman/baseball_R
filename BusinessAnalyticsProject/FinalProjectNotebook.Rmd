@@ -1,0 +1,356 @@
+---
+title: "BI - Final Project"
+output:
+  word_document: default
+  html_document:
+    df_print: paged
+---
+These packages are needed for doing a left join on data. 
+```{r}
+library(sparklyr)
+library(plyr)
+library(dplyr)
+library(tidyverse)
+library(MASS)
+library(psych)
+library(lmtest)
+```
+
+
+Change the wd to where the files are 
+
+```{r}
+setwd("C:/Users/sarah/Desktop/baseballdatabank-2017.1/core")
+```
+
+Load in the Master data containing information about all of the players
+```{r}
+Master <- read.csv ("Master.csv")
+head(Master)
+```
+
+Load in the Batting data table limiting to years 2000+ and batters who have at least 10 at bats
+
+```{r}
+Batting <- read.csv ("Batting.csv") %>% filter (yearID > 1999) %>% filter(AB > 100)
+head(Batting)
+```
+
+Do the Same for Pitching but filter by having pitched at least 5 games
+```{r}
+Pitching <- read.csv("Pitching.csv") %>% filter(yearID > 1999) %>% filter(G > 25) %>% filter(ERA < 50)
+head(Pitching)
+```
+
+And the same for Fielding. 
+```{r}
+Fielding <- read.csv("Fielding.csv") %>% filter(yearID > 1999)
+head(Fielding)
+
+```
+Now let's merge the batting data into master data. This is a 1 to many relationship. There are multiple batting entries (1 for each season) for each player (1 record in master). In the end I expect this new table to be the same length as the batting table (12664 observations) and have 45 variables (22 batting and 24 master - 1 combined playerID).
+
+And finally all the fields together. We have to do a left join since not all players are in the Pitching table. We don't want to eliminate those records, we just want NaNs for all the pitching stats. 
+```{r}
+PlayersWithBatting <- merge(Batting, Master, "playerID")
+PlayersWithBattingAndFielding <- merge(PlayersWithBatting, Fielding, c("playerID", "yearID"))
+CompleteDataSet <- left_join(PlayersWithBattingAndFielding, Pitching, by = c("playerID","yearID"))
+```
+
+Add in Age Variable. We predicted this would be an important variable in both ERA and Batting Average. This field isn't in the data set. We calculate this by doing the math from the yearID and the players birthday
+
+```{r}
+
+CompleteDataSet$DOB <- ISOdate(CompleteDataSet$birthYear,CompleteDataSet$birthMonth, CompleteDataSet$birthDay)
+
+CompleteDataSet$StartingDate <- ISOdate(CompleteDataSet$yearID,4, 1)
+
+CompleteDataSet$AGE <- round(difftime(CompleteDataSet$StartingDate,CompleteDataSet$DOB, units = 'weeks')/52)
+
+head(CompleteDataSet)
+```
+
+We only care about certain values for each value so let's filter it out.
+Batting Average is not a variable in our dataset. We need to calculate it. Batting Average is simply Hits/At Bats. 
+Let's also rename some of the variables so that it is clear what we're talking about.
+
+```{r}
+BattingData <- dplyr::select(CompleteDataSet, playerID, yearID, G.x, R.x, AB, H.x, RBI, SB.x, CS.x, BB.x, SO.x, AGE, weight, height, bats, throws, G.y, G, POS) 
+BattingData <- BattingData %>% mutate(BattingAverage = H.x/AB) %>% plyr::rename(c("G.x" = "Games", "R.x" = "Runs", "SB.x" = "StolenBases", "CS.x" = "CaughtStealing", "BB.x" = "Walks", "SO.x" = "Strikeouts", "G.y" = "GamesFielding", "G" = "GamesBatting"))
+
+PitchingData <- dplyr::select(Pitching, playerID, yearID, G, SO, ERA, BB, W, L, G, GS, H, HR,BAOpp, IBB, WP, HBP, BK,R)
+PitchingData <- PitchingData %>% filter(!is.na(ERA)) %>% plyr::rename(c("SO" = "Strikeouts", "BB" = "Walks", "W" = "Wins", "L" = "Loses", "G" = "Games", "GS" = "Games Started", "H" = "Hits", "HR" = "Homeruns", "BAOpp" = "OpponentBattingAverage", "IBB" = "IntentionalWalks", "HBP" = "HitByPitch", "BK" = "Balks", "R" ="Runs"))
+```
+
+This is a plot of all the ERA values. This will be useful in the pitching analysis
+
+```{r}
+ggplot(data = PitchingData, aes(x= ERA)) + geom_histogram()
+```
+
+Now let's plot the histogram for Batting Averages similar to the way we did for ERA 
+
+```{r}
+ggplot(data = BattingData, aes(x= BattingAverage)) + geom_histogram() + ggtitle('Histogram of Batting Average')
+```
+This seems about right. The average batting average is around 2.5 with a few really good players above a 3.0. WE can also look at some statistics to get a better idea of the distribution
+```{r}
+summary(BattingData$BattingAverage)
+describe(BattingData$BattingAverage)
+```
+
+
+
+```{r}
+ggplot(data = BattingData, aes(x=RBI, y = BattingAverage)) + geom_point() + geom_smooth(model = "lm") + ggtitle("RBI")
+```
+
+```{r}
+ggplot(data = BattingData, aes(x=weight, y = BattingAverage)) + geom_smooth(model = "lm") + ggtitle("Weight")
+```
+```{r}
+ggplot(data = BattingData, aes(x=height, y = BattingAverage)) + geom_smooth(model = "lm") + ggtitle("Height")
+```
+```
+
+```{r}
+ggplot(data = BattingData, aes(x=StolenBases, y = BattingAverage)) + geom_point() + geom_smooth(model = "lm") + ggtitle("StolenBases")
+```
+```
+
+```{r}
+ggplot(data = BattingData, aes(x=bats, y = BattingAverage)) + geom_boxplot()
+ggplot(data = BattingData, aes(x=bats, y = BattingAverage)) + geom_violin()
+
+```
+
+```{r}
+ggplot(data = BattingData, aes(x=POS, y = BattingAverage)) + geom_boxplot()
+ggplot(data = BattingData, aes(x=POS, y = BattingAverage)) + geom_violin()
+```
+```{r}
+model_1 <- lm(BattingAverage ~ RBI, data=BattingData)
+summary(model_1)
+```
+```{r}
+predicted_BA <- mutate(BattingData, predicted = predict(model_1, BattingData))
+
+```
+
+
+
+```{r}
+ggplot(data = predicted_BA) + geom_point(mapping = aes(x = RBI, y = BattingAverage)) + geom_point(mapping = aes(x = RBI, y = predicted, color="red"))
+```
+```{r}
+ggplot(data = predicted_BA) + geom_point(mapping = aes(x = BattingAverage, y = predicted))
+
+```
+```{r}
+model_2 <- lm(BattingAverage ~ RBI + Runs, data=BattingData)
+summary(model_2)
+```
+```{r}
+predicted_BA2 <- mutate(BattingData, predicted = predict(model_2, BattingData))
+
+ggplot(data = predicted_BA2) + geom_point(mapping = aes(x = RBI, y = BattingAverage)) + geom_point(mapping = aes(x = RBI, y = predicted, color="red"))
+ggplot(data = predicted_BA2) + geom_point(mapping = aes(x = BattingAverage, y = predicted))
+
+```
+
+```{r Model3}
+model_3 <- lm(BattingAverage ~ RBI + Runs + Walks, data = BattingData)
+summary(model_3)
+
+predicted_BA3 <- mutate(BattingData, predicted = predict(model_3, BattingData))
+
+ggplot(data = predicted_BA3) + geom_point(mapping = aes(x= RBI, y = BattingAverage)) + geom_point(mapping = aes(x=RBI, y = predicted, color = "red"))
+
+ggplot(data=predicted_BA3) + geom_point(mapping = aes(x=BattingAverage, y = predicted))
+```
+
+```{r}
+lrtest(model_2,model_3)
+```
+```{r Model4}
+model_4 <- lm(BattingAverage ~ RBI + Runs + Walks + Strikeouts , data=BattingData)
+summary(model_4)
+
+predicted_BA4 <- mutate(BattingData, predicted = predict(model_4, BattingData))
+
+ggplot(data = predicted_BA4) + geom_point(mapping = aes(x = RBI, y = BattingAverage)) + geom_point(mapping = aes(x = RBI, y = predicted, color="red"))
+ggplot(data = predicted_BA4) + geom_point(mapping = aes(x = BattingAverage, y = predicted))
+```
+```{r}
+lrtest(model_3, model_4)
+```
+
+```{r Model5}
+model_5 <- lm(BattingAverage ~ RBI + Runs + Walks + Strikeouts + AGE, data=BattingData)
+summary(model_5)
+
+predicted_BA5 <- mutate(BattingData, predicted = predict(model_5, BattingData))
+
+ggplot(data = predicted_BA5) + geom_point(mapping = aes(x = RBI, y = BattingAverage)) + geom_point(mapping = aes(x = RBI, y = predicted, color="red"))
+ggplot(data = predicted_BA5) + geom_point(mapping = aes(x = BattingAverage, y = predicted))
+
+```
+```{r}
+lrtest(model_4, model_5)
+```
+
+
+```{r Model6}
+model_6 <- lm(BattingAverage ~ RBI + Runs + Walks + Strikeouts + AGE + height , data=BattingData)
+summary(model_6)
+
+predicted_BA6 <- mutate(BattingData, predicted = predict(model_6, BattingData))
+
+ggplot(data = predicted_BA6) + geom_point(mapping = aes(x = RBI, y = BattingAverage)) + geom_point(mapping = aes(x = RBI, y = predicted, color="red"))
+ggplot(data = predicted_BA6) + geom_point(mapping = aes(x = BattingAverage, y = predicted))
+```
+```{r}
+lrtest(model_5, model_6)
+```
+
+```{r Model7}
+model_7 <- lm(BattingAverage ~ RBI + Runs + Walks + Strikeouts + AGE + height + weight , data=BattingData)
+summary(model_7)
+
+predicted_BA7 <- mutate(BattingData, predicted = predict(model_7, BattingData))
+
+ggplot(data = predicted_BA7) + geom_point(mapping = aes(x = RBI, y = BattingAverage)) + geom_point(mapping = aes(x = RBI, y = predicted, color="red"))
+ggplot(data = predicted_BA7) + geom_point(mapping = aes(x = BattingAverage, y = predicted))
+```
+```{r}
+lrtest(model_6, model_7)
+```
+
+```{r}
+model_8 <- lm(BattingAverage ~ RBI + Runs + Walks + Strikeouts + AGE + height + StolenBases, data=BattingData)
+summary(model_8)
+
+predicted_BA8 <- mutate(BattingData, predicted = predict(model_8, BattingData))
+
+ggplot(data = predicted_BA8) + geom_point(mapping = aes(x = RBI, y = BattingAverage)) + geom_point(mapping = aes(x = RBI, y = predicted, color="red"))
+ggplot(data = predicted_BA8) + geom_point(mapping = aes(x = BattingAverage, y = predicted))
+```
+```{r}
+lrtest(model_6, model_8)
+```
+
+```{r}
+model_9 <- lm(BattingAverage ~ RBI + Runs + Walks + Strikeouts + AGE + height + POS , data=BattingData)
+summary(model_9)
+
+predicted_BA9 <- mutate(BattingData, predicted = predict(model_9, BattingData))
+
+ggplot(data = predicted_BA9) + geom_point(mapping = aes(x = RBI, y = BattingAverage)) + geom_point(mapping = aes(x = RBI, y = predicted, color="red"))
+ggplot(data = predicted_BA9) + geom_point(mapping = aes(x = BattingAverage, y = predicted))
+```
+```{r}
+lrtest(model_6, model_9)
+```
+
+```{r}
+model_10 <- lm(BattingAverage ~ RBI + Runs + Walks + Strikeouts + AGE + height + POS + bats, data=BattingData)
+summary(model_10)
+
+predicted_BA10 <- mutate(BattingData, predicted = predict(model_10, BattingData))
+
+ggplot(data = predicted_BA10) + geom_point(mapping = aes(x = RBI, y = BattingAverage)) + geom_point(mapping = aes(x = RBI, y = predicted, color="red"))
+ggplot(data = predicted_BA10) + geom_point(mapping = aes(x = BattingAverage, y = predicted))
+```
+```{r}
+lrtest(model_9, model_10)
+```
+
+```{r}
+BattingData$isPitcher <- as.numeric(BattingData$POS == "P")
+```
+```{r}
+model_11<- lm(BattingAverage ~ RBI + Runs + Walks + Strikeouts + AGE + height + isPitcher , data=BattingData)
+summary(model_11)
+
+predicted_BA11 <- mutate(BattingData, predicted = predict(model_11, BattingData))
+
+ggplot(data = predicted_BA11) + geom_point(mapping = aes(x = RBI, y = BattingAverage)) + geom_point(mapping = aes(x = RBI, y = predicted, color="red"))
+ggplot(data = predicted_BA11) + geom_point(mapping = aes(x = BattingAverage, y = predicted))
+```
+
+```{r}
+lrtest(model_9, model_11)
+```
+
+```{r Pitching Models}
+model1_Pitching <- lm(ERA ~ Strikeouts, data = PitchingData)
+summary(model1_Pitching)
+```
+
+```{r}
+predicted_ERA_1 <- mutate(PitchingData, predicted_ERA = predict(model1_Pitching, PitchingData))
+ggplot(data = predicted_ERA_1) + geom_point(mapping = aes(x = ERA, y = predicted_ERA))
+```
+```{r}
+model2_Pitching <- lm(ERA ~ Strikeouts + Walks, data = PitchingData)
+summary(model2_Pitching)
+```
+
+```{r}
+predicted_ERA_2 <- mutate(PitchingData, predicted_ERA = predict(model2_Pitching, PitchingData))
+ggplot(data = predicted_ERA_2) + geom_point(mapping = aes(x = ERA, y = predicted_ERA))
+```
+```{r}
+lrtest(model1_Pitching,model2_Pitching)
+```
+
+```{r}
+model3_Pitching <- lm(ERA ~ Strikeouts + Walks + WP, data = PitchingData)
+```
+```{r}
+predicted_ERA_3 <- mutate(PitchingData, predicted_ERA = predict(model3_Pitching, PitchingData))
+
+ggplot(data = predicted_ERA_3) + geom_point(mapping = aes(x = ERA, y = predicted_ERA))
+```
+```{r}
+lrtest(model2_Pitching, model3_Pitching)
+```
+```{r}
+model4_Pitching <- lm(ERA ~ Strikeouts + Walks + WP + Games, data = PitchingData)
+summary(model4_Pitching)
+```
+```{r}
+predicted_ERA_4 <- mutate(PitchingData, predicted_ERA = predict(model4_Pitching, PitchingData))
+
+ggplot(data = predicted_ERA_4) + geom_point(mapping = aes(x = ERA, y = predicted_ERA))
+```
+```{r}
+lrtest(model3_Pitching, model4_Pitching)
+```
+```{r}
+model5_Pitching <- lm(ERA ~ Strikeouts + Walks + WP + Games + Hits, data = PitchingData)
+summary(model5_Pitching)
+
+predicted_ERA_5 <- mutate(PitchingData, predicted_ERA = predict(model5_Pitching, PitchingData))
+
+ggplot(data = predicted_ERA_5) + geom_point(mapping = aes(x = ERA, y = predicted_ERA))
+
+
+```
+
+```{r}
+lrtest(model4_Pitching, model5_Pitching)
+```
+```{r}
+model6_Pitching <- lm(ERA ~ Strikeouts + Walks + WP + Games + Hits +Homeruns, data = PitchingData)
+summary(model6_Pitching)
+
+predicted_ERA_6 <- mutate(PitchingData, predicted_ERA = predict(model6_Pitching, PitchingData))
+
+ggplot(data = predicted_ERA_6) + geom_point(mapping = aes(x = ERA, y = predicted_ERA))
+```
+
+```{r}
+lrtest(model5_Pitching, model6_Pitching)
+```
+
